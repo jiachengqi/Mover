@@ -1,0 +1,138 @@
+@using GoogleMapsComponents
+@using GoogleMapsComponents.Maps
+@using frontend.Helpers
+@using shared.Models
+@inject NotificationService NotificationService
+@inject ILogger<MapComponent> Logger
+
+<AdvancedGoogleMap @ref="_map" Id="map1" Options="@mapOptions" OnAfterInit="InitializeMap">
+    @foreach (var marker in Markers)
+    {
+        <MarkerComponent
+            @key="marker.Id"
+            Lat="@marker.Lat"
+            Lng="@marker.Lng"
+            Clickable="@marker.Clickable"
+            Draggable="@marker.Draggable"
+            OnClick="@(() => marker.Active = !marker.Active)"
+            OnMove="pos => marker.UpdatePosition(pos)">
+            <p style="color: red; font-size:10.0pt;">@marker.Title</p>
+        </MarkerComponent>
+    }
+</AdvancedGoogleMap>
+
+@code {
+    [Parameter]
+    public List<MarkerData> Markers { get; set; } = new List<MarkerData>();
+
+    [Parameter]
+    public string PolylineData { get; set; } = string.Empty;
+
+    private MapOptions mapOptions = new MapOptions();
+    private AdvancedGoogleMap? _map;
+    private Polyline? _polyline;
+
+    protected override void OnInitialized()
+    {
+        mapOptions = new MapOptions
+        {
+            Zoom = 5,
+            Center = new LatLngLiteral { Lat = 37.7749, Lng = -122.4194 }, 
+            MapTypeId = MapTypeId.Roadmap,
+            MapId = "e44bf5ea3a16a371"
+        };
+    }
+
+    public async Task RenderRouteAsync(RouteResult routeResult)
+    {
+        if (routeResult == null)
+        {
+            Logger.LogError("RenderRouteAsync called with null routeResult");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(routeResult.Polyline))
+        {
+            Logger.LogWarning("RenderRouteAsync called with empty polyline");
+            return;
+        }
+
+        var pathList = PolylineHelper.DecodePolylinePoints(routeResult.Polyline);
+        Logger.LogInformation("Decoded {Count} points from polyline.", pathList?.Count ?? 0);
+
+        if (pathList == null || !pathList.Any())
+        {
+            Logger.LogError("decoded path list is null or empty.");
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Warning,
+                Summary = "invalid Polyline",
+                Detail = "provided polyline data is invalid or empty"
+            });
+            return;
+        }
+
+        if (routeResult.OptimizedAddresses.Any())
+        {
+            var firstAddress = routeResult.OptimizedAddresses.First();
+            await _map.InteropObject.SetCenter(new LatLngLiteral { Lat = firstAddress.Latitude, Lng = firstAddress.Longitude });
+            await _map.InteropObject.SetZoom(10);
+        }
+
+        if (_polyline != null)
+        {
+            await _polyline.SetMap(null);
+            await _polyline.DisposeAsync();
+            _polyline = null;
+        }
+
+        var polylineOptions = new PolylineOptions
+        {
+            Path = pathList,
+            StrokeColor = "blue",
+            StrokeWeight = 4,
+            Map = _map.InteropObject
+        };
+
+        try
+        {
+            _polyline = await Polyline.CreateAsync(_map.MapRef.JsRuntime, polylineOptions);
+            Logger.LogInformation("polyline created successfully on the map.");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "error creating polyline on the map.");
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "polyline Creation Error",
+                Detail = "error occurred while creating the polyline on the map"
+            });
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task InitializeMap()
+    {
+        await InvokeAsync(StateHasChanged);
+        Logger.LogInformation("map initialized successfully");
+    }
+
+    public class MarkerData
+    {
+        public int Id { get; set; }
+        public double Lat { get; set; }
+        public double Lng { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public bool Clickable { get; set; } = true;
+        public bool Draggable { get; set; }
+        public bool Active { get; set; }
+
+        public void UpdatePosition(LatLngLiteral position)
+        {
+            Lat = position.Lat;
+            Lng = position.Lng;
+        }
+    }
+}

@@ -1,0 +1,126 @@
+@using frontend.Models
+@using frontend.Services
+@using shared.Models
+@inject IRouteOptimizationService RouteOptimizationService
+@inject NotificationService NotificationService
+@inject ILogger<AddressForm> Logger
+
+<EditForm Model="Model" OnValidSubmit="OnSubmit">
+    <RadzenFieldset Legend="Delivery Addresses">
+        @foreach (var address in Model.Addresses)
+        {
+            <div class="address-input" style="margin-bottom:10px;" @key="address.Id">
+                <RadzenTextBox
+                    @bind-Value="address.Address"
+                    Name=@($"Address_{address.Id}")
+                    Style="width: 100%;"
+                    Placeholder="Enter address..." />
+            </div>
+        }
+        <RadzenButton
+            ButtonStyle="ButtonStyle.Primary"
+            Click="@AddAddress"
+            Text="Add Address"
+            Icon="add_circle"
+            Style="margin-right:10px;"
+            Disabled="@isSubmitting" />
+        <RadzenButton
+            ButtonStyle="ButtonStyle.Danger"
+            Click="@RemoveAddress"
+            Text="Remove Address"
+            Icon="remove_circle"
+            Disabled="@(Model.Addresses.Count <= 2 || isSubmitting)" />
+    </RadzenFieldset>
+    <RadzenButton
+        ButtonType="ButtonType.Submit"
+        ButtonStyle="ButtonStyle.Primary"
+        Text="Optimize Route"
+        Style="margin-top:10px;"
+        Disabled="@isSubmitting" />
+</EditForm>
+
+@code {
+    [Parameter]
+    public EventCallback<RouteResult?> OnRouteOptimized { get; set; }
+
+    private RouteOptimizationModel Model = new RouteOptimizationModel();
+    private bool isSubmitting = false;
+
+    private void AddAddress()
+    {
+        if (!isSubmitting)
+        {
+            Model.Addresses.Add(new AddressItem());
+        }
+    }
+
+    private void RemoveAddress()
+    {
+        if (Model.Addresses.Count > 2 && !isSubmitting)
+        {
+            Model.Addresses.RemoveAt(Model.Addresses.Count - 1);
+        }
+    }
+
+    private async Task OnSubmit()
+    {
+        try
+        {
+            isSubmitting = true;
+            
+            if (Model.Addresses.Count < 2 || Model.Addresses.Any(a => string.IsNullOrWhiteSpace(a.Address)))
+            {
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Error,
+                    Summary = "validation Error",
+                    Detail = "please enter at least two valid addresses"
+                });
+                return;
+            }
+            
+            var addressValues = Model.Addresses.Select(a => a.Address).ToList();
+            
+            var routeResult = await RouteOptimizationService.OptimizeRouteAsync(addressValues);
+
+            if (routeResult == null)
+            {
+                NotificationService.Notify(new NotificationMessage
+                {
+                    Severity = NotificationSeverity.Error,
+                    Summary = "deserialization Error",
+                    Detail = "received an empty response from the server."
+                });
+                Logger.LogError("deserialization error received null route result.");
+                return;
+            }
+            
+            await OnRouteOptimized.InvokeAsync(routeResult);
+            Logger.LogInformation("route optimized success");
+        }
+        catch (HttpRequestException ex)
+        {
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "API Error",
+                Detail = ex.Message
+            });
+            Logger.LogError(ex, "http Error during route optimization");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "unexpected error during form submission");
+            NotificationService.Notify(new NotificationMessage
+            {
+                Severity = NotificationSeverity.Error,
+                Summary = "Exception",
+                Detail = "An unexpected error occurred. Please try again."
+            });
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
+    }
+}

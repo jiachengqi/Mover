@@ -1,0 +1,46 @@
+@page "/"
+@using shared.Models
+@inject ILogger<Index> Logger
+
+<AddressForm OnRouteOptimized="HandleRouteOptimized" />
+
+@if (RouteResult != null)
+{
+    <h4>Optimized Route</h4>
+    <p>Total Distance: @RouteResult.TotalDistance km</p>
+    <p>Estimated Time: @RouteResult.EstimatedTime minutes</p>
+}
+
+<CustomMapComponent Markers="Markers" PolylineData="RouteResult?.Polyline" @ref="mapComponent" />
+
+@code {
+    private RouteResult? RouteResult;
+    private List<CustomMapComponent.MarkerData> Markers = new List<CustomMapComponent.MarkerData>();
+    private CustomMapComponent? mapComponent;
+    
+    private async Task HandleRouteOptimized(RouteResult? routeResult)
+    {
+        if (routeResult == null)
+        {
+            Logger.LogWarning("HandleRouteOptimized called with null routeResult.");
+            return;
+        }
+
+        RouteResult = routeResult;
+        
+        Markers = RouteResult.OptimizedAddresses.Select((address, index) => new CustomMapComponent.MarkerData
+        {
+            Id = index + 1,
+            Lat = address.Latitude,
+            Lng = address.Longitude,
+            Title = $"Stop {index + 1}: {address.Value}"
+        }).ToList();
+
+        StateHasChanged();
+
+        if (mapComponent != null)
+        {
+            await mapComponent.RenderRouteAsync(RouteResult);
+        }
+    }
+}
